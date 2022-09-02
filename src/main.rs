@@ -184,15 +184,24 @@ impl<const A: usize> VerkleProof<A> {
 }
 
 fn main() {
+    #[cfg(feature = "bench")]
+    use std::time::Instant;
+
     // Tree arity.
     const A: usize = 2;
+    #[cfg(feature = "bench")]
+    type ARITY = typenum::U2;
     const NUM_LEAFS: usize = 8;
     const CHALLENGE: usize = 7;
 
     let pedersen_bases = gen_pedersen_params(A);
 
     let leafs: Vec<F> = (0..NUM_LEAFS as u64).map(F::from).collect();
+    #[cfg(feature = "bench")]
+    let start = Instant::now();
     let tree = VerkleTree::<A>::new(leafs, &pedersen_bases);
+    #[cfg(feature = "bench")]
+    let vtree_build_time = start.elapsed().as_secs_f32();
     let root = tree.root();
 
     // Good proof.
@@ -204,4 +213,36 @@ fn main() {
     proof.polys[0][0] += F::one();
     let is_valid = proof.verify(CHALLENGE, root, &pedersen_bases);
     dbg!(is_valid);
+
+    // Bechmark verkle tree building against sha256 and poseidon merkle tree building.
+    #[cfg(feature = "bench")]
+    {
+        let mut layer_len = NUM_LEAFS;
+        let start = Instant::now();
+        while layer_len > 1 {
+            layer_len /= A;
+            for _ in 0..layer_len {
+                Sha256::digest(&[0u8; 32 * A]);
+            }
+        }
+        let sha256_build_time = start.elapsed().as_secs_f32();
+
+        use neptune::poseidon::{Poseidon, PoseidonConstants};
+        let consts = PoseidonConstants::<F, ARITY>::new();
+        let mut hasher = Poseidon::<F, ARITY>::new_with_preimage(&[F::zero(); A], &consts);
+        let mut layer_len = NUM_LEAFS;
+        let start = Instant::now();
+        while layer_len > 1 {
+            layer_len /= A;
+            for _ in 0..layer_len {
+                hasher.hash();
+                hasher.reset();
+            }
+        }
+        let poseidon_build_time = start.elapsed().as_secs_f32();
+
+        dbg!(vtree_build_time);
+        dbg!(sha256_build_time);
+        dbg!(poseidon_build_time);
+    };
 }
